@@ -32,6 +32,25 @@ def health_check():
 def health():
     return jsonify({'status': 'healthy'})
 
+@app.route('/debug')
+def debug():
+    try:
+        me = bot.get_me()
+        return jsonify({
+            'bot_info': {
+                'username': me.username,
+                'first_name': me.first_name,
+                'id': me.id
+            },
+            'token_valid': True,
+            'active_batches': len(batch_manager.user_buffers)
+        })
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'token_valid': False
+        }), 500
+
 # --- ENVIRONMENT VARIABLES ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 IMAGE_WEBHOOK_URL = os.getenv("IMAGE_WEBHOOK")
@@ -330,30 +349,41 @@ def show_config(message):
 def handle_unknown(message):
     bot.reply_to(message, "🤔 Tôi chỉ xử lý files (ảnh, video, documents). Gửi /help để xem hướng dẫn!")
 
-# --- MAIN EXECUTION ---
-if __name__ == "__main__":
+# --- TELEGRAM BOT STARTUP ---
+def start_bot():
+    """Start telegram bot polling"""
     logger.info("🚀 Bot starting up...")
     logger.info(f"📷 Image webhook: {'Configured' if IMAGE_WEBHOOK_URL else 'Not configured'}")
     logger.info(f"🎥 Video webhook: {'Configured' if VIDEO_WEBHOOK_URL else 'Not configured'}")
     logger.info(f"📄 Docs webhook: {'Configured' if DOCS_WEBHOOK_URL else 'Not configured'}")
     logger.info(f"⚙️ Batch timeout: {BATCH_TIMEOUT}s, Max size: {MAX_BATCH_SIZE}")
     
-    # Start Flask app in background
-    flask_thread = threading.Thread(
-        target=lambda: app.run(
-            host='0.0.0.0', 
-            port=int(os.getenv('PORT', 5000)),
-            debug=False
-        )
-    )
-    flask_thread.daemon = True
-    flask_thread.start()
+    # Test bot connection first
+    try:
+        me = bot.get_me()
+        logger.info(f"Bot info: @{me.username} ({me.first_name})")
+    except Exception as e:
+        logger.error(f"Failed to get bot info: {e}")
+        return
     
     logger.info("✅ Bot ready! Starting polling...")
     
     # Start bot polling with error handling
-    try:
-        bot.polling(none_stop=True, interval=1, timeout=30)
-    except Exception as e:
-        logger.error(f"Bot polling error: {e}")
-        raise
+    while True:
+        try:
+            logger.info("Starting polling...")
+            bot.polling(none_stop=True, interval=1, timeout=30)
+        except Exception as e:
+            logger.error(f"Bot polling error: {e}")
+            time.sleep(5)  # Wait before retry
+            logger.info("Retrying polling...")
+
+# Start bot in background thread when module loads
+bot_thread = threading.Thread(target=start_bot)
+bot_thread.daemon = True
+bot_thread.start()
+
+# --- MAIN EXECUTION ---
+if __name__ == "__main__":
+    # For local development
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=False)
